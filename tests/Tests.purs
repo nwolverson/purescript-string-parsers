@@ -12,20 +12,20 @@ import Text.Parsing.StringParser
 
 import qualified Test.QuickCheck as QC
 
-parens :: forall a. Parser a -> Parser a
+parens :: forall eff a. Parser eff a -> Parser eff a
 parens = between (string "(") (string ")")
 
-nested :: Parser Number
+nested :: forall eff. Parser eff Number
 nested = fix $ \p -> (do 
   string "a"
   return 0) <|> ((+) 1) <$> parens p
 
-parseTest :: forall a eff. (Show a) => Parser a -> String -> Eff (trace :: Trace | eff) {}
-parseTest p input = case runParser p input of
-  Left (ParseError err) -> print err
+parseTest :: forall a eff. (Show a) => PureParser a -> String -> Eff (trace :: Trace | eff) {}
+parseTest p input = case runPureParser p input of
+  Left err -> print err
   Right result -> print result
 
-opTest :: Parser String
+opTest :: forall eff. Parser eff String
 opTest = chainl anyChar (do 
   string "+"
   return (++)) ""
