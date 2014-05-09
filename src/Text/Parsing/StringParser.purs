@@ -24,52 +24,62 @@ data ParseError = ParseError String
 instance showParseError :: Show ParseError where
   show (ParseError msg) = msg
 
---
--- A parser is represented as a function which takes a pair of 
--- continuations for failure and success.
---
-data Parser a = Parser (forall r. PosString -> (Pos -> ParseError -> r) -> (a -> PosString -> r) -> r)
-
-unParser :: forall a r. Parser a -> PosString -> (Pos -> ParseError -> r) -> (a -> PosString -> r) -> r
-unParser (Parser p) = p
+data Parser a 
+  = Done a
+  | More (PosString -> { remainingInput :: PosString, next :: Either ParseError (Parser a) })
 
 runParser :: forall a. Parser a -> String -> Either ParseError a
-runParser p s = unParser p { str: s, pos: 0 } (\_ err -> Left err) (\a _ -> Right a)
+runParser p s = go p { str: s, pos: 0 }
+  where
+  go :: forall a. Parser a -> PosString -> Either ParseError a
+  go (Done a) _ = Right a
+  go (More f) s = case f s of
+                    { next = Left err } -> Left err
+                    o@{ next = Right next } -> go next o.remainingInput
 
 --
 -- Parser type class instances
 --
 
 instance functorParser :: Functor Parser where
-  (<$>) f p = Parser (\s fc sc -> 
-    unParser p s fc (\a s' -> sc (f a) s'))
+  (<$>) f (Done a) = Done (f a)
+  (<$>) f (More more) = More $ \s -> let o = more s in { remainingInput: o.remainingInput, next: ((<$>) f) <$> o.next }
 
 instance applyParser :: Apply Parser where
-  (<*>) f x = Parser (\s fc sc -> 
-    unParser f s fc (\f' s' ->
-      unParser x s' fc (\x' s'' -> sc (f' x') s'')))
+  (<*>) = ap
 
 instance applicativeParser :: Applicative Parser where
-  pure a = Parser (\s _ sc -> sc a s)
+  pure = Done
 
 instance bindParser :: Bind Parser where
-  (>>=) p f = Parser (\s fc sc ->
-    unParser p s fc (\a s' ->
-      unParser (f a) s' fc sc))
+  (>>=) (Done a) f = f a
+  (>>=) (More more) f = More $ \s -> let o = more s in { remainingInput: o.remainingInput, next: (flip (>>=) f) <$> o.next }
 
 instance monadParser :: Monad Parser
 
 instance alternativeParser :: Alternative Parser where
   empty = fail "No alternative"
-  (<|>) p1 p2 = Parser (\s fc sc -> 
-    unParser p1 s (\pos msg -> 
-      if s.pos == pos 
-      then unParser p2 s fc sc 
-      else fc pos msg) 
-      sc)
+  (<|>) p1 p2 = mark p1
+    where
+    mark (Done a) = Done a
+    mark (More more) = More $ \s -> go s (more s)
+    
+    go s o@{ next = Left _ } | o.remainingInput.pos == s.pos = { remainingInput: s, next: Right p2 }
+    go s o@{ next = Left _ } = o
+    go s o@{ next = Right (Done a) } = { remainingInput: o.remainingInput, next: Right (Done a) }
+    go s o@{ next = Right (More more) } = { remainingInput: o.remainingInput, next: Right (More $ \s' -> go s (more s')) }
 
 fail :: forall a. String -> Parser a
-fail msg = Parser (\{ pos = pos } fc _ -> fc pos (ParseError msg))
+fail msg = More $ \s -> { remainingInput: s, next: Left (ParseError msg) }
+
+fix :: forall a. (Parser a -> Parser a) -> Parser a
+fix f = More (\s -> { remainingInput: s, next: Right (f (fix f)) })
 
 try :: forall a. Parser a -> Parser a
-try p = Parser (\(s@{ pos = pos }) fc sc -> unParser p s (\_ -> fc pos) sc)
+try (More more) = More $ \s -> 
+  let
+    go { remainingInput = ri, next = Left msg } = { remainingInput: s, next: Left msg }
+    go { remainingInput = ri, next = Right (Done a) } = { remainingInput: ri, next: Right (Done a) }
+    go { remainingInput = ri, next = Right (More more) } = { remainingInput: ri, next: Right (More $ \s -> go (more s)) }
+  in go (more s)
+try other = other

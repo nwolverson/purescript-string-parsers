@@ -1,19 +1,20 @@
 module Text.Parsing.StringParser.String where
   
+import Data.Either (Either(..))
 import Data.String (charAt, length, take, indexOf')
 import Text.Parsing.StringParser
 
 eof :: Parser {}
-eof = Parser (\s fc sc -> case s of
-  { str = str, pos = i } | i < length str -> fc i (ParseError "Expected EOF") 
-  _ -> sc {} s)
+eof = More $ \s -> case s of
+  { str = str, pos = i } | i < length str -> { remainingInput: s, next: Left $ ParseError $ "Expected EOF" } 
+  _ -> { remainingInput: s, next: Right $ pure {} } 
 
 anyChar :: Parser String
-anyChar = Parser (\s fc sc -> case s of
-  { str = str, pos = i } | i < length str -> sc (charAt i str) { str: str, pos: i + 1 }
-  { pos = i } -> fc i (ParseError "Unexpected EOF"))
+anyChar = More $ \s -> case s of
+  { str = str, pos = i } | i < length str -> { remainingInput: { str: str, pos: i + 1 }, next: Right $ pure $ charAt i str }
+  { pos = i } -> { remainingInput: s, next: Left $ ParseError $ "Unexpected EOF" }
 
 string :: String -> Parser String
-string nt = Parser (\s fc sc -> case s of
-  { str = str, pos = i } | indexOf' nt i str == i -> sc nt { str: str, pos: i + length nt }
-  { pos = i } -> fc i (ParseError $ "Expected '" ++ nt ++ "'."))
+string nt = More $ \s -> case s of
+  { str = str, pos = i } | indexOf' nt i str == i -> { remainingInput: { str: str, pos: i + length nt }, next: Right (pure nt) }
+  { pos = i } -> { remainingInput: s, next: Left $ ParseError $ "Expected '" ++ nt ++ "'." }

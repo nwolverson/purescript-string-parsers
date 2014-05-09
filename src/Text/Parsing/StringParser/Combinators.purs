@@ -15,9 +15,6 @@ many1 p = do
 (<?>) :: forall a. Parser a -> String -> Parser a
 (<?>) p msg = p <|> fail msg
 
-fix :: forall a. (Parser a -> Parser a) -> Parser a
-fix f = Parser (\s fc sc -> unParser (f (fix f)) s fc sc)
-
 between :: forall a open close. Parser open -> Parser close -> Parser a -> Parser a
 between open close p = do
   open
